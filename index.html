@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <title>智慧型篩選排班系統</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        body { font-family: "Microsoft JhengHei", sans-serif; background: #f4f6f9; display: flex; justify-content: center; padding: 20px; }
+        .container { display: flex; gap: 20px; width: 100%; max-width: 1500px; }
+        .sidebar { width: 350px; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); height: fit-content; }
+        .calendar-view { flex: 1; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        input[type="text"], button { width: 100%; padding: 10px; margin: 5px 0; border-radius: 6px; border: 1px solid #ddd; box-sizing: border-box; }
+        .period-group { display: flex; gap: 10px; margin: 10px 0; background: #eee; padding: 10px; border-radius: 6px; }
+        .toggle-group { display: flex; align-items: center; gap: 5px; margin: 10px 0; font-weight: bold; color: #555; cursor: pointer; }
+        .btn-green { background: #28a745; color: white; border: none; cursor: pointer; }
+        .btn-red { background: #dc3545; color: white; border: none; cursor: pointer; }
+        .btn-darkred { background: #8b0000; color: white; border: none; cursor: pointer; margin-top: 15px; }
+        .btn-info { background: #17a2b8; color: white; border: none; cursor: pointer; font-size: 13px; margin-bottom: 3px; }
+        .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+        .day { border: 1px solid #eee; min-height: 130px; padding: 5px; cursor: pointer; position: relative; border-radius: 4px; }
+        .day.selected { border: 2px solid #007bff; background: #eef7ff; }
+        
+        /* 假日與日期標示 */
+        .holiday-text { color: #d9534f; font-size: 11px; font-weight: bold; margin-bottom: 2px; }
+        .date-num { font-weight: bold; }
+        .date-red { color: #d9534f; }
+        
+        /* 標籤樣式 (統一格式) */
+        .tag { font-size: 11px; padding: 3px; margin-bottom: 3px; border-radius: 3px; border-left: 3px solid #333; display: flex; justify-content: space-between; align-items: center; }
+        .p-1 { background: #fff9db; } .p-2 { background: #d4edda; } .p-3 { background: #f3e5f5; }
+        .p-all { background: #e3f2fd; border-left-color: #007bff; font-weight: bold; }
+        .rest-tag { background: #ffe6e6; border-left-color: #dc3545; color: #c82333; } /* 禁排樣式 */
+        
+        .del-x { cursor: pointer; color: #999; margin-left: 4px; padding: 0 4px; font-weight: bold;} 
+        .del-x:hover { color: red; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="sidebar">
+        <h2>排班系統</h2>
+        <div id="sel-info" style="color:#007bff; font-weight:bold;">已選擇 0 天</div>
+        
+        <input type="text" id="person" placeholder="姓名 (新增及篩選共用)" oninput="render()">
+        <input type="text" id="title" placeholder="任務 (選填，例如：打掃、值星)">
+        
+        <div class="period-group">
+            <label><input type="checkbox" name="period" value="1"> 早</label>
+            <label><input type="checkbox" name="period" value="2"> 中</label>
+            <label><input type="checkbox" name="period" value="3"> 晚</label>
+        </div>
+
+        <button class="btn-green" onclick="submit('events')">批次排班</button>
+        <button class="btn-red" onclick="submit('restrictions')">設為禁排</button>
+        
+        <label class="toggle-group">
+            <input type="checkbox" id="hide-rest" onchange="render()"> 隱藏禁排標記 (不影響排班阻擋)
+        </label>
+
+        <button class="btn-darkred" onclick="clearAllEvents()">⚠️ 一鍵清除所有排程</button>
+
+        <hr>
+        <h3>📊 導出 (依據目前篩選)</h3>
+        <button class="btn-info" onclick="exportExcel()">導出 Excel (.xlsx)</button>
+        <button class="btn-info" onclick="exportICS()">導出 Windows 日曆 (.ics)</button>
+        <button class="btn-info" onclick="exportMD()">導出 Markdown</button>
+        <button class="btn-info" onclick="exportPDF()">導出 PDF 報表</button>
+        <button onclick="exportJSON()" style="font-size:12px;">備份完整 JSON</button>
+    </div>
+
+    <div class="calendar-view" id="pdf-content">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+            <button onclick="moveMonth(-1)" style="width:auto;">◀</button>
+            <h2 id="m-title"></h2>
+            <button onclick="moveMonth(1)" style="width:auto;">▶</button>
+        </div>
+        <div class="calendar-grid">
+            <div style="text-align:center;font-weight:bold;color:#d9534f;">日</div>
+            <div style="text-align:center;font-weight:bold;">一</div>
+            <div style="text-align:center;font-weight:bold;">二</div>
+            <div style="text-align:center;font-weight:bold;">三</div>
+            <div style="text-align:center;font-weight:bold;">四</div>
+            <div style="text-align:center;font-weight:bold;">五</div>
+            <div style="text-align:center;font-weight:bold;color:#d9534f;">六</div>
+        </div>
+        <div id="calendar-body" class="calendar-grid"></div>
+    </div>
+</div>
+
+<script>
+    let curDate = new Date(), allData = {events:[], restrictions:[]}, selDates = [];
+
+    // 台灣國定假日字典 (涵蓋 2024 - 2026)
+    const twHolidays = {
+        "2024-01-01": "元旦", "2024-02-08": "小年夜", "2024-02-09": "除夕", "2024-02-10": "春節", "2024-02-11": "春節", "2024-02-12": "春節", "2024-02-13": "春節", "2024-02-14": "春節", "2024-02-28": "和平紀念日", "2024-04-04": "兒童節", "2024-04-05": "清明節", "2024-05-01": "勞動節", "2024-06-10": "端午節", "2024-09-17": "中秋節", "2024-10-10": "國慶日",
+        "2025-01-01": "元旦", "2025-01-25": "小年夜", "2025-01-26": "春節", "2025-01-27": "春節", "2025-01-28": "除夕", "2025-01-29": "春節", "2025-01-30": "春節", "2025-01-31": "春節", "2025-02-01": "春節", "2025-02-02": "春節", "2025-02-28": "和平紀念日", "2025-04-03": "兒童節", "2025-04-04": "清明節", "2025-05-01": "勞動節", "2025-05-31": "端午節", "2025-10-06": "中秋節", "2025-10-10": "國慶日",
+        "2026-01-01": "元旦", "2026-02-16": "除夕", "2026-02-17": "春節", "2026-02-18": "春節", "2026-02-19": "春節", "2026-02-20": "春節", "2026-02-21": "春節", "2026-02-22": "春節", "2026-02-28": "和平紀念日", "2026-04-03": "兒童節", "2026-04-04": "清明節", "2026-05-01": "勞動節", "2026-06-19": "端午節", "2026-09-25": "中秋節", "2026-10-10": "國慶日"
+    };
+
+    const load = async () => { const res = await fetch('/api/all'); allData = await res.json(); render(); };
+
+    function getFilteredEvents() {
+        const filterName = document.getElementById('person').value.trim().toLowerCase();
+        if (!filterName) return allData.events;
+        return allData.events.filter(e => e.person.toLowerCase().includes(filterName));
+    }
+
+    function render() {
+        const body = document.getElementById('calendar-body'); body.innerHTML = '';
+        const y = curDate.getFullYear(), m = curDate.getMonth();
+        document.getElementById('m-title').innerText = `${y}年 ${m+1}月`;
+        const start = new Date(y, m, 1).getDay(), days = new Date(y, m+1, 0).getDate();
+        const filteredEvents = getFilteredEvents();
+        const hideRest = document.getElementById('hide-rest').checked;
+
+        for(let i=0; i<start; i++) body.appendChild(document.createElement('div')).className='day';
+
+        for(let d=1; d<=days; d++) {
+            const dateStr = `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+            const div = document.createElement('div');
+            div.className = `day ${selDates.includes(dateStr)?'selected':''}`;
+            div.onclick = () => { selDates.includes(dateStr) ? selDates=selDates.filter(x=>x!==dateStr) : selDates.push(dateStr); render(); document.getElementById('sel-info').innerText=`已選擇 ${selDates.length} 天`; };
+
+            // 判斷是否為週末或國定假日
+            const weekDay = new Date(y, m, d).getDay();
+            const isHoliday = twHolidays[dateStr] || weekDay === 0 || weekDay === 6;
+            const numClass = isHoliday ? 'date-num date-red' : 'date-num';
+            
+            let html = `<span class="${numClass}">${d}</span>`;
+            
+            if (twHolidays[dateStr]) {
+                html += `<div class="holiday-text">🎊 ${twHolidays[dateStr]}</div>`;
+            }
+            
+            html += `<div style="margin-top:5px;">`;
+            
+            const filterName = document.getElementById('person').value.trim().toLowerCase();
+            const dayEvents = filteredEvents.filter(e => e.date === dateStr);
+            
+            let dayRest = [];
+            // 若未勾選隱藏禁排，才把資料放入陣列渲染
+            if (!hideRest) {
+                dayRest = allData.restrictions.filter(r => r.date === dateStr && (!filterName || r.person.toLowerCase().includes(filterName)));
+            }
+            
+            // 找出「整天」行程的人員
+            const people = [...new Set(dayEvents.map(e => e.person))];
+            const allDayPeople = [];
+            people.forEach(p => {
+                const pEvents = dayEvents.filter(e => e.person === p);
+                const p1 = pEvents.find(e => e.period === "1");
+                const p2 = pEvents.find(e => e.period === "2");
+                const p3 = pEvents.find(e => e.period === "3");
+
+                if(p1 && p2 && p3 && p1.title === p2.title && p2.title === p3.title) {
+                    allDayPeople.push({ person: p, title: p1.title, ids: [p1.id, p2.id, p3.id] });
+                }
+            });
+
+            const allDayIds = allDayPeople.flatMap(x => x.ids);
+            const remainingEvents = dayEvents.filter(e => !allDayIds.includes(e.id));
+
+            // 按時段排序 (1=早, 2=中, 3=晚)
+            remainingEvents.sort((a, b) => parseInt(a.period) - parseInt(b.period));
+            if (!hideRest) dayRest.sort((a, b) => parseInt(a.period) - parseInt(b.period));
+
+            // 1. 渲染整天行程
+            allDayPeople.forEach(ad => {
+                const taskStr = ad.title ? ` - ${ad.title}` : '';
+                html += `<div class="tag p-all"><span>[整天] ${ad.person}${taskStr}</span><span class="del-x" onclick='delBatch("events", ${JSON.stringify(ad.ids)}, event)'>×</span></div>`;
+            });
+
+            // 2. 渲染禁排 (若不隱藏)
+            dayRest.forEach(r => {
+                const pText = r.period == 1 ? '早' : r.period == 2 ? '中' : '晚';
+                html += `<div class="tag rest-tag"><span>🚫 [${pText}] ${r.person}</span><span class="del-x" onclick="del('restrictions','${r.id}',event)">×</span></div>`;
+            });
+
+            // 3. 渲染依時序排列的單一時段行程
+            remainingEvents.forEach(e => {
+                const taskStr = e.title ? ` - ${e.title}` : '';
+                html += `<div class="tag p-${e.period}"><span>[${e.period==1?'早':e.period==2?'中':'晚'}] ${e.person}${taskStr}</span><span class="del-x" onclick="del('events','${e.id}',event)">×</span></div>`;
+            });
+
+            div.innerHTML = html + `</div>`;
+            body.appendChild(div);
+        }
+    }
+
+    async function submit(type) {
+        const ps = Array.from(document.querySelectorAll('input[name="period"]:checked')).map(c => c.value);
+        const person = document.getElementById('person').value.trim();
+        if(selDates.length===0 || ps.length===0 || !person) return alert('請輸入姓名、日期與時段');
+        
+        const payload = { person, periods: ps, dates: selDates, title: document.getElementById('title').value.trim() };
+        
+        const res = await fetch(`/api/${type}`, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+        if(!res.ok) alert((await res.json()).error); else { selDates=[]; load(); document.getElementById('sel-info').innerText=`已選擇 0 天`; }
+    }
+
+    async function clearAllEvents() {
+        if(confirm('⚠️ 警告：確定要清除「所有排班行程」嗎？\n(這項操作無法復原，但會保留所有人的禁排設定)')) {
+            const res = await fetch('/api/events/all', { method: 'DELETE' });
+            if(res.ok) {
+                alert('已清除所有排程！');
+                selDates = [];
+                document.getElementById('sel-info').innerText = `已選擇 0 天`;
+                load();
+            } else {
+                alert('清除失敗，請檢查伺服器狀態。');
+            }
+        }
+    }
+
+    async function del(type, id, e) { 
+        e.stopPropagation(); 
+        if(confirm(`確定要刪除該${type==='events'?'班表':'禁排'}嗎？`)) { 
+            await fetch(`/api/${type}/${id}`, {method:'DELETE'}); 
+            load(); 
+        } 
+    }
+
+    async function delBatch(type, ids, e) {
+        e.stopPropagation();
+        if(confirm('刪除整天班表？')) {
+            for(let id of ids) {
+                await fetch(`/api/${type}/${id}`, {method:'DELETE'});
+            }
+            load();
+        }
+    }
+
+    // 匯出功能保留區
+    function exportExcel() {
+        const filterName = document.getElementById('person').value || "全體";
+        const events = getFilteredEvents().sort((a, b) => {
+            if (a.date !== b.date) return a.date.localeCompare(b.date);
+            return parseInt(a.period) - parseInt(b.period);
+        });
+        
+        const data = events.map(e => ({
+            '日期': e.date,
+            '時段': e.period == 1 ? '早班' : e.period == 2 ? '中班' : '晚班',
+            '人員': e.person,
+            '任務': e.title || '無'
+        }));
+
+        const ws = XLSX.utils.json_to_sheet(data);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "排班表");
+        XLSX.writeFile(wb, `Schedule_${filterName}.xlsx`);
+    }
+
+    function exportICS() {
+        const filterName = document.getElementById('person').value || "全體";
+        const events = getFilteredEvents();
+        const now = new Date().toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+        
+        let ics = "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//My Calendar//TW\nCALSCALE:GREGORIAN\n";
+        const times = {
+            "1": { start: "080000", end: "120000" },
+            "2": { start: "130000", end: "170000" },
+            "3": { start: "180000", end: "220000" }
+        };
+
+        events.forEach(e => {
+            const d = e.date.replace(/-/g, '');
+            const t = times[e.period];
+            const taskStr = e.title ? ` - ${e.title}` : '';
+            const summary = `[${e.period==1?'早':e.period==2?'中':'晚'}] ${e.person}${taskStr}`;
+            
+            ics += `BEGIN:VEVENT\n`;
+            ics += `UID:${e.id}@smartcalendar\n`;
+            ics += `DTSTAMP:${now}\n`;
+            ics += `SUMMARY:${summary}\n`;
+            ics += `DTSTART:${d}T${t.start}\n`;
+            ics += `DTEND:${d}T${t.end}\n`;
+            ics += `END:VEVENT\n`;
+        });
+        ics += "END:VCALENDAR";
+        
+        const blob = new Blob([ics], {type: 'text/calendar;charset=utf-8'});
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `Schedule_${filterName}.ics`; a.click();
+    }
+
+    function exportMD() {
+        const events = getFilteredEvents();
+        const filterName = document.getElementById('person').value || "全體";
+        let md = `# 排班表 (${filterName})\n\n`;
+        
+        events.sort((a,b) => {
+            if (a.date !== b.date) return a.date.localeCompare(b.date);
+            return parseInt(a.period) - parseInt(b.period);
+        }).forEach(e => {
+            const taskStr = e.title ? e.title : '未指派任務';
+            md += `- **${e.date}** [${e.period==1?'早':e.period==2?'中':'晚'}] ${e.person}: ${taskStr}\n`;
+        });
+        
+        const blob = new Blob([md], {type: 'text/markdown'});
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `Schedule_${filterName}.md`; a.click();
+    }
+
+    function exportPDF() {
+        const element = document.getElementById('pdf-content');
+        const filterName = document.getElementById('person').value || "全體";
+        html2pdf().from(element).set({ margin: 10, filename: `Schedule_${filterName}.pdf`, jsPDF: { orientation: 'landscape' } }).save();
+    }
+
+    function exportJSON() {
+        const blob = new Blob([JSON.stringify(allData, null, 2)], {type: 'application/json'});
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'full_backup.json'; a.click();
+    }
+
+    function moveMonth(n) { curDate.setMonth(curDate.getMonth()+n); load(); }
+    
+    load();
+</script>
+</body>
+</html>
